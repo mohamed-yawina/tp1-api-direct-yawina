@@ -289,13 +289,17 @@ public class Bb implements Serializable {
             // ===== ASSISTANT =====
 
             String role = """
-                    You are a helpful assistant. You help the user to find the information they need.
-                    If the user type a question, you answer it.
-                    """;
+            You are an expert Java and Spring Boot teacher.
+            Explain programming concepts in simple French.
+            Give practical examples using Java.
+            Help students understand Java, Spring Boot,
+            REST APIs, JPA and microservices.
+            """;
 
             this.listeRolesSysteme.add(
-                    new SelectItem(role, "Assistant")
+                    new SelectItem(role, "Expert Java et Spring Boot")
             );
+
 
             // ===== TRADUCTEUR =====
 
