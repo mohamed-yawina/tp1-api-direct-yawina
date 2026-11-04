@@ -1,7 +1,8 @@
 
 package ma.emsi.yawina.tp1apidirectyawina.jsf;
 
-import ma.emsi.yawina.tp1apidirectyawina.service.GenerateurReponse;
+import ma.emsi.yawina.tp1apidirectyawina.llm.JsonAdapterPourGemini;
+import ma.emsi.yawina.tp1apidirectyawina.llm.LlmInteraction;
 
 import jakarta.faces.application.FacesMessage;
 import jakarta.faces.context.FacesContext;
@@ -12,87 +13,67 @@ import jakarta.inject.Named;
 
 import java.io.Serializable;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 /**
  * Backing bean pour la page JSF index.xhtml.
- * Portée view pour conserver l'état de la conversation qui dure pendant plusieurs requêtes HTTP.
- * La portée view nécessite l'implémentation de Serializable
- * (le backing bean peut être mis en mémoire secondaire).
+ * La portée ViewScoped conserve l'état pendant
+ * plusieurs requêtes HTTP sur la même vue.
  */
 @Named
 @ViewScoped
 public class Bb implements Serializable {
 
-    /**
-     * Rôle "système" que l'on attribuera plus tard à un LLM.
-     * Possible d'écrire un nouveau rôle dans la liste déroulante.
-     */
+    private static final long serialVersionUID = 1L;
+
+    // ===== ROLE SYSTEME =====
+
     private String roleSysteme;
 
-    /**
-     * Quand le rôle est choisi par l'utilisateur dans la liste déroulante,
-     * il n'est plus possible de le modifier, sauf si on veut un nouveau chat.
-     */
     private boolean roleSystemeChangeable = true;
 
-    /**
-     * Liste de tous les rôles de l'API prédéfinis.
-     */
     private List<SelectItem> listeRolesSysteme;
 
-    /**
-     * Dernière question posée par l'utilisateur.
-     */
+    // ===== QUESTION ET REPONSE =====
+
     private String question;
 
-    /**
-     * Dernière réponse de l'API OpenAI.
-     */
     private String reponse;
 
     // ===== TP1 : MODE DEBUG =====
 
-    /**
-     * Texte JSON de la requête envoyée au LLM.
-     */
     private String texteRequeteJson;
 
-    /**
-     * Texte JSON de la réponse reçue du LLM.
-     */
     private String texteReponseJson;
 
-    /**
-     * Activation ou désactivation du mode debug.
-     */
     private boolean debug = false;
 
-    // ===== FIN DES AJOUTS TP1 =====
+    // ===== HISTORIQUE =====
 
-    /**
-     * La conversation depuis le début.
-     */
     private StringBuilder conversation = new StringBuilder();
 
-    /**
-     * Service pour modifier la question et générer la réponse.
-     */
-    @Inject
-    private GenerateurReponse generateurReponse;
+    // ===== INJECTIONS CDI =====
 
     /**
-     * Contexte JSF. Utilisé pour qu'un message d'erreur
-     * s'affiche dans le formulaire.
+     * Adapter permettant de construire les requêtes JSON,
+     * communiquer avec Gemini et gérer son historique.
+     */
+    @Inject
+    private JsonAdapterPourGemini jsonAdapter;
+
+    /**
+     * Contexte JSF pour afficher les messages d'erreur.
      */
     @Inject
     private FacesContext facesContext;
 
-    /**
-     * Obligatoire pour un bean CDI, s'il y a un autre constructeur.
-     */
+    // ===== CONSTRUCTEUR =====
+
     public Bb() {
     }
+
+    // ===== GETTERS ET SETTERS =====
 
     public String getRoleSysteme() {
         return this.roleSysteme;
@@ -118,19 +99,14 @@ public class Bb implements Serializable {
         return this.reponse;
     }
 
-    /**
-     * Setter indispensable pour le textarea.
-     *
-     * @param reponse la réponse à la question.
-     */
     public void setReponse(String reponse) {
         this.reponse = reponse;
     }
 
-    // ===== TP1 : GETTERS ET SETTERS DEBUG =====
+    // ===== GETTERS ET SETTERS DEBUG =====
 
     public String getTexteRequeteJson() {
-        return texteRequeteJson;
+        return this.texteRequeteJson;
     }
 
     public void setTexteRequeteJson(String texteRequeteJson) {
@@ -138,7 +114,7 @@ public class Bb implements Serializable {
     }
 
     public String getTexteReponseJson() {
-        return texteReponseJson;
+        return this.texteReponseJson;
     }
 
     public void setTexteReponseJson(String texteReponseJson) {
@@ -146,17 +122,17 @@ public class Bb implements Serializable {
     }
 
     public boolean isDebug() {
-        return debug;
+        return this.debug;
     }
 
     public void setDebug(boolean debug) {
         this.debug = debug;
     }
 
-    // ===== FIN DES AJOUTS TP1 =====
+    // ===== CONVERSATION =====
 
     public String getConversation() {
-        return conversation.toString();
+        return this.conversation.toString();
     }
 
     public void setConversation(String conversation) {
@@ -164,85 +140,164 @@ public class Bb implements Serializable {
     }
 
     /**
-     * Envoie la question au serveur.
-     * En attendant de l'envoyer à un LLM, le serveur fait un traitement
-     * quelconque, juste pour tester :
-     * Le traitement consiste à copier la question en minuscules et à
-     * l'entourer avec "||". Le rôle système est ajouté au début
-     * de la première réponse.
+     * Envoie une question à Gemini.
      *
-     * @return null pour rester sur la même page.
+     * @return null pour rester sur la même page JSF.
      */
     public String envoyer() {
+
+        // ===== DIAGNOSTIC : AVANT ENVOI =====
+
+        System.out.println("===== DIAGNOSTIC TP1 =====");
+        System.out.println(
+                "Instance Bb : " + System.identityHashCode(this)
+        );
+        System.out.println(
+                "Instance JsonAdapter : "
+                        + System.identityHashCode(jsonAdapter)
+        );
+        System.out.println(
+                "Conversation avant envoi : " + conversation
+        );
+        System.out.println(
+                "Question : " + question
+        );
+
+        // ===== VERIFICATION QUESTION =====
+
         if (this.question == null || this.question.isBlank()) {
-            // Erreur ! Le formulaire va être réaffiché en réponse à
-            // la requête POST, avec un message d'erreur.
+
             FacesMessage message = new FacesMessage(
                     FacesMessage.SEVERITY_ERROR,
                     "Texte question vide",
                     "Il manque le texte de la question"
             );
+
             facesContext.addMessage(null, message);
+
             return null;
         }
 
-        // Traite la question pour construire la réponse.
+        // ===== DEBUT DE CONVERSATION =====
+
         if (this.conversation.isEmpty()) {
-            // Si la conversation n'a pas encore commencé,
-            // fige la liste déroulante du rôle système.
+
+            // Bloque le changement du rôle système.
             this.roleSystemeChangeable = false;
+
+            // Configure le rôle système dans l'adapter.
+            jsonAdapter.setSystemRole(this.roleSysteme);
+
+            System.out.println(
+                    "Nouvelle conversation : rôle système initialisé"
+            );
+
+        } else {
+
+            System.out.println(
+                    "Conversation existante : conservation du contexte"
+            );
         }
 
-        this.reponse = this.generateurReponse.genererReponse(
-                this.question,
-                this.roleSysteme
+        // ===== APPEL A L'API GEMINI =====
+
+        try {
+
+            LlmInteraction interaction =
+                    jsonAdapter.envoyerRequete(this.question);
+
+            // Réponse textuelle du LLM
+            this.reponse = interaction.reponseExtraite();
+
+            // JSON envoyé à Gemini
+            this.texteRequeteJson = interaction.questionJson();
+
+            // JSON reçu de Gemini
+            this.texteReponseJson = interaction.reponseJson();
+
+            System.out.println(
+                    "Réponse Gemini reçue avec succès"
+            );
+
+        } catch (Exception e) {
+
+            this.reponse = "Erreur : " + e.getMessage();
+
+            System.err.println(
+                    "Erreur pendant l'appel Gemini : "
+                            + e.getMessage()
+            );
+
+            FacesMessage message = new FacesMessage(
+                    FacesMessage.SEVERITY_ERROR,
+                    "Problème de connexion avec l'API du LLM",
+                    "Problème de connexion avec l'API du LLM"
+                            + e.getMessage()
+                            + "\n"
+                            + Arrays.toString(e.getStackTrace())
+            );
+
+            facesContext.addMessage(null, message);
+        }
+
+        // ===== MISE A JOUR DE LA CONVERSATION =====
+
+        afficherConversation();
+
+        // ===== DIAGNOSTIC : APRES ENVOI =====
+
+        System.out.println(
+                "Conversation après envoi : " + conversation
         );
 
-        // La conversation contient l'historique des questions-réponses.
-        afficherConversation();
+        System.out.println(
+                "===== FIN DIAGNOSTIC TP1 ====="
+        );
 
         return null;
     }
 
     /**
-     * Pour un nouveau chat.
-     * Termine la portée view en retournant "index" et pas null.
-     *
-     * @return "index"
+     * Démarre un nouveau chat.
      */
     public String nouveauChat() {
         return "index";
     }
 
     /**
-     * Pour afficher la conversation dans le textArea de la page JSF.
+     * Affiche l'historique des questions et réponses.
      */
     private void afficherConversation() {
+
         this.conversation
                 .append("== User:\n")
-                .append(question)
+                .append(this.question)
                 .append("\n== Serveur:\n")
-                .append(reponse)
+                .append(this.reponse)
                 .append("\n");
     }
 
+    /**
+     * Liste des rôles système prédéfinis.
+     */
     public List<SelectItem> getRolesSysteme() {
+
         if (this.listeRolesSysteme == null) {
-            // Génère les rôles de l'API prédéfinis.
+
             this.listeRolesSysteme = new ArrayList<>();
 
-            // Vous pouvez évidemment écrire ces rôles
-            // dans la langue que vous voulez.
+            // ===== ASSISTANT =====
+
             String role = """
                     You are a helpful assistant. You help the user to find the information they need.
                     If the user type a question, you answer it.
                     """;
 
-            // 1er argument : la valeur du rôle.
-            // 2ème argument : le libellé du rôle.
             this.listeRolesSysteme.add(
                     new SelectItem(role, "Assistant")
             );
+
+            // ===== TRADUCTEUR =====
 
             role = """
                     You are an interpreter. You translate from English to French and from French to English.
@@ -254,6 +309,8 @@ public class Bb implements Serializable {
             this.listeRolesSysteme.add(
                     new SelectItem(role, "Traducteur Anglais-Français")
             );
+
+            // ===== GUIDE TOURISTIQUE =====
 
             role = """
                     Your are a travel guide. If the user type the name of a country or of a town,
